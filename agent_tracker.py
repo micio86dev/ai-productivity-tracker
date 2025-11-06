@@ -72,7 +72,10 @@ conn.commit()
 
 
 def get_active_window():
-    """Ritorna (process_name, window_title) della finestra attiva in modo cross-platform."""
+    """
+    Ritorna (process_name, window_title_or_site) della finestra attiva in modo cross-platform.
+    Per i browser prova a estrarre il dominio del sito.
+    """
     system = platform.system()
 
     # --- macOS ---
@@ -82,7 +85,44 @@ def get_active_window():
 
             active_app = NSWorkspace.sharedWorkspace().frontmostApplication()
             app_name = active_app.localizedName()
-            return app_name, app_name
+            window_title = app_name
+
+            # Browser principali
+            if app_name in ["Google Chrome", "Safari"]:
+                scripts = {
+                    "Google Chrome": """
+                        tell application "Google Chrome"
+                            if windows = {} then return ""
+                            return URL of active tab of front window
+                        end tell
+                    """,
+                    "Safari": """
+                        tell application "Safari"
+                            if windows = {} then return ""
+                            return URL of current tab of front window
+                        end tell
+                    """,
+                }
+                try:
+                    url = (
+                        subprocess.check_output(["osascript", "-e", scripts[app_name]])
+                        .decode()
+                        .strip()
+                    )
+                    if url:
+                        # estrai dominio
+                        match = re.search(r"https?://([a-zA-Z0-9.-]+)", url)
+                        if match:
+                            window_title = match.group(1)
+                        else:
+                            window_title = url
+                    else:
+                        window_title = app_name
+                except Exception:
+                    window_title = app_name
+
+            return app_name, window_title or app_name
+
         except Exception as e:
             print(f"[WARN] macOS active window detection failed: {e}")
             return "unknown", "Unknown"
@@ -97,6 +137,12 @@ def get_active_window():
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
             proc = psutil.Process(pid)
             window_title = win32gui.GetWindowText(hwnd)
+
+            # se sembra un URL o un titolo browser, prova a estrarre dominio
+            match = re.search(r"https?://([a-zA-Z0-9.-]+)", window_title)
+            if match:
+                window_title = match.group(1)
+
             return proc.name(), window_title or proc.name()
         except Exception as e:
             print(f"[WARN] Windows active window detection failed: {e}")
@@ -113,7 +159,15 @@ def get_active_window():
                 .decode()
                 .strip()
             )
-            return "unknown", title or "Unknown"
+            if not title:
+                title = "Unknown"
+
+            # prova a estrarre dominio
+            match = re.search(r"https?://([a-zA-Z0-9.-]+)", title)
+            if match:
+                title = match.group(1)
+
+            return "unknown", title
         except Exception:
             return "unknown", "Unknown"
 
@@ -123,7 +177,22 @@ def get_active_window():
 
 
 def collect_activity():
-    process_name, window_title = get_active_window()
+    try:
+        result = get_active_window()
+        if not result or len(result) != 2:
+            process_name, window_title = "unknown", "Unknown"
+        else:
+            process_name, window_title = result
+
+        # --- normalizza il nome del processo ---
+        process_name = os.path.basename(process_name)  # prende solo il nome finale
+        process_name = re.sub(
+            r"\.app$", "", process_name, flags=re.IGNORECASE
+        )  # rimuove .app
+
+    except Exception:
+        process_name, window_title = "unknown", "Unknown"
+
     cpu_percent = psutil.cpu_percent(interval=0.5)
     ts = datetime.now(timezone.utc).isoformat()
 
@@ -149,10 +218,13 @@ def collect_terminal_activity():
             if any(re.search(rf"\b{cmd}\b", cmdline) for cmd in DEV_COMMANDS):
                 key = hashlib.sha1(cmdline.encode()).hexdigest()
                 now = time.time()
-                # ignora se lo stesso comando è già loggato negli ultimi 60s
                 if key in _last_seen and now - _last_seen[key] < 60:
                     continue
                 _last_seen[key] = now
+
+                # --- normalizza il nome del processo ---
+                process_name = os.path.basename(proc.info["name"] or "terminal")
+                process_name = re.sub(r"\.app$", "", process_name, flags=re.IGNORECASE)
 
                 ts = datetime.now(timezone.utc).isoformat()
                 cur.execute(
@@ -160,7 +232,7 @@ def collect_terminal_activity():
                     INSERT INTO activity (timestamp, process, window_title, cpu_percent, synced, device_id, username)
                     VALUES (?, ?, ?, ?, 0, ?, ?)
                     """,
-                    (ts, cmdline[:1000], "terminal", 0, DEVICE_ID, USERNAME),
+                    (ts, process_name, "terminal", 0, DEVICE_ID, USERNAME),
                 )
                 conn.commit()
         except (psutil.NoSuchProcess, psutil.AccessDenied):

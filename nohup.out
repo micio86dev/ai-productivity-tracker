@@ -1,0 +1,42 @@
+Agent tracker avviato... Ctrl+C per fermare.
+[SYNC] 13 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 13 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+[SYNC] 1 record sincronizzati su MongoDB
+Traceback (most recent call last):
+  File "/Users/alessandromicelli/Sites/Personali/codevember-camp/agent_tracker/agent_tracker.py", line 300, in <module>
+    main()
+    ~~~~^^
+  File "/Users/alessandromicelli/Sites/Personali/codevember-camp/agent_tracker/agent_tracker.py", line 283, in main
+    collect_activity()
+    ~~~~~~~~~~~~~~~~^^
+  File "/Users/alessandromicelli/Sites/Personali/codevember-camp/agent_tracker/agent_tracker.py", line 192, in collect_activity
+    cur.execute(
+    ~~~~~~~~~~~^
+        """
+        ^^^
+    ...<3 lines>...
+        (ts, process_name, window_title, cpu_percent, DEVICE_ID, USERNAME),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+sqlite3.OperationalError: attempt to write a readonly database
