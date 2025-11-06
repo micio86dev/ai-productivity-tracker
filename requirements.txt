@@ -2,3 +2,6 @@ psutil
 pygetwindow
 pymongo
 python-dotenv
+pywin32; platform_system == "Windows"
+pyobjc; platform_system == "Darwin"
+xdotool; platform_system == "Linux"

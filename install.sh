@@ -18,7 +18,7 @@ pip install -r requirements.txt
 echo "📦 Dipendenze installate."
 
 # crea config se non esiste
-CONFIG_FILE="config.env"
+CONFIG_FILE=".env"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "Inserisci la tua stringa MongoDB Atlas URI:"
   read -r MONGO_URI
