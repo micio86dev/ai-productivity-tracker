@@ -1,0 +1,4 @@
+psutil
+pygetwindow
+pymongo
+python-dotenv
