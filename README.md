@@ -60,5 +60,36 @@ Ferma con `Ctrl + C` o cercando il processo:
 pkill -f agent_tracker.py
 ```
 
-5. **SQLite (locale)**
+4. **SQLite (locale)**
    File: `~/activity.db`
+
+5. **Generazione eseguibile**
+
+```bash
+pip install pyinstaller
+pyinstaller --onefile agent_tracker.py
+```
+
+Questo genera un binario in:
+
+- dist/agent_tracker (macOS/Linux)
+- dist/agent_tracker.exe (Windows)
+
+```bash
+pyinstaller --onefile \
+  --add-data ".env:." \
+  --add-data "README.md:." \
+  agent_tracker.py
+```
+
+🧠 Su Windows usa ; invece di : per separare percorsi:
+
+```csharp
+--add-data ".env;."
+```
+
+⚙️ **Test rapido**
+
+```bash
+./dist/agent_tracker
+```
