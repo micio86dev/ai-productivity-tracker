@@ -274,7 +274,7 @@ def collect_terminal_activity():
     try:
         proc = subprocess.Popen(
             ["tail", "-F", history_file],
-            stdout=subprocess.PIPE,  # 👈 garantisce che stdout non sia None
+            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
             bufsize=1,
@@ -385,7 +385,7 @@ last_sync = time.time()
 
 def tracking():
     """Thread di tracking periodica."""
-    conn_local = None  # 👈 previene NameError nel finally
+    conn_local = None
     try:
         conn_local = sqlite3.connect(DB_PATH)
         cur_local = conn_local.cursor()
@@ -393,7 +393,7 @@ def tracking():
         while True:
             if not is_user_active():
                 if not paused:
-                    print("[PAUSE] Nessuna attività utente, tracking sospeso...")
+                    print("[PAUSE] Nessuna attività utente, tracking sospeso... ⏸️")
                     paused = True
                 time.sleep(TRACKING_INTERVAL)
                 continue
