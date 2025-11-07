@@ -35,10 +35,11 @@ USERNAME = os.getenv("USERNAME") or os.getenv("USER") or "unknown"
 SYSTEM = platform.system()
 DEVICE_NAME = platform.node()
 
-# tempo di inattività massimo in secondi (es. 120 = 2 minuti)
-INACTIVITY_THRESHOLD = 120
+# tempo di inattività massimo in secondi (es. 60 = 1 minuto)
+INACTIVITY_THRESHOLD = 60
 _last_input_time = time.time()
 
+DEV_SHELLS = ("zsh", "bash", "fish")
 DEV_COMMANDS = [
     "git",
     "npm",
@@ -47,6 +48,7 @@ DEV_COMMANDS = [
     "docker",
     "yarn",
 ]
+MAX_AGE = 10
 
 if not MONGO_URI:
     raise ValueError("❌ MONGO_URI mancante. Inseriscilo in .env")
@@ -98,8 +100,7 @@ def get_active_window():
 
     # --- macOS ---
     if system == "Darwin":
-        app_name = ""
-        window_title = ""
+        app_name, window_title = "unknown", "Unknown"
 
         try:
             script = """
@@ -118,8 +119,8 @@ def get_active_window():
                 active_app = NSWorkspace.sharedWorkspace().frontmostApplication()
                 app_name = active_app.localizedName()
                 window_title = app_name
-        except Exception:
-            print(f"[Active Window] Not found")
+        except Exception as e:
+            print(f"[WARN] MAC OS active window detection failed: {e}")
 
         # Browser principali
         if app_name in ["Google Chrome", "Safari", "Firefox", "Brave Browser"]:
@@ -261,37 +262,31 @@ def collect_activity():
     conn.commit()
 
 
-_last_seen = {}
-
-
 def collect_terminal_activity():
-    """Rileva processi dev attivi (con filtro duplicati temporanei)."""
-    global _last_seen
-    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-        try:
-            cmdline = " ".join(proc.info["cmdline"]) if proc.info["cmdline"] else ""
-            if any(re.search(rf"\b{cmd}\b", cmdline) for cmd in DEV_COMMANDS):
-                key = hashlib.sha1(cmdline.encode()).hexdigest()
-                now = time.time()
-                if key in _last_seen and now - _last_seen[key] < 60:
-                    continue
-                _last_seen[key] = now
+    cmd = ["tail", "-F", os.path.expanduser("~/.zsh_history")]
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True) as p:
+        assert p.stdout is not None
+        for line in p.stdout:
+            print("[TERM]", line)
+            if line.startswith(": "):
+                parts = line.split(";", 1)
+                cmdline = parts[1].strip() if len(parts) == 2 else line.strip()
+            else:
+                cmdline = line.strip()
 
-                # --- normalizza il nome del processo ---
-                process_name = os.path.basename(proc.info["name"] or "terminal")
-                process_name = re.sub(r"\.app$", "", process_name, flags=re.IGNORECASE)
+            if cmdline.startswith("git"):
+                print("[GIT]", cmdline)
 
+                cpu_percent = psutil.cpu_percent(interval=None)
                 ts = datetime.now(timezone.utc).isoformat()
                 cur.execute(
                     """
                     INSERT INTO activity (timestamp, process, window_title, cpu_percent, synced, device_id, username)
                     VALUES (?, ?, ?, ?, 0, ?, ?)
                     """,
-                    (ts, process_name, "terminal", 0, DEVICE_ID, USERNAME),
+                    (ts, "cli", "TERM", cpu_percent, DEVICE_ID, USERNAME),
                 )
                 conn.commit()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
 
 
 def sync_to_mongo():
