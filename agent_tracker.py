@@ -7,15 +7,19 @@ import threading
 import datetime
 import os
 import psutil
+import Quartz
+
+# --- Fix Quartz LazyImport bug (ignora warning Pylance) ---
+try:
+    _ = Quartz.CGEventGetLocation  # type: ignore[attr-defined]
+except KeyError:
+    from Quartz import CoreGraphics
+
+    Quartz.CGEventGetLocation = CoreGraphics.CGEventGetLocation  # type: ignore[attr-defined]
 from pynput import mouse, keyboard
 import pymongo
-import uuid, hashlib, re
+import uuid, re
 from datetime import datetime, timezone
-
-try:
-    import pygetwindow as gw
-except ImportError:
-    gw = None
 
 # === CONFIG ===
 from dotenv import load_dotenv
@@ -55,7 +59,7 @@ if not MONGO_URI:
 
 
 # === INIT ===
-conn = sqlite3.connect(DB_PATH)
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cur = conn.cursor()
 cur.execute(
     """
@@ -227,6 +231,8 @@ _insert_counter = 0
 def collect_activity():
     global _insert_counter
 
+    print(f"[collect_activity]")
+
     try:
         result = get_active_window()
         if not result or len(result) != 2:
@@ -239,6 +245,8 @@ def collect_activity():
         process_name = re.sub(
             r"\.app$", "", process_name, flags=re.IGNORECASE
         )  # rimuove .app
+
+        print(f"[Activity] {process_name} - {window_title}")
 
     except Exception:
         process_name, window_title = "unknown", "Unknown"
@@ -255,7 +263,7 @@ def collect_activity():
     )
 
     _insert_counter += 1
-    if _insert_counter >= 5:
+    if _insert_counter >= 10:
         conn.commit()
         _insert_counter = 0
 
@@ -267,7 +275,6 @@ def collect_terminal_activity():
     with subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True) as p:
         assert p.stdout is not None
         for line in p.stdout:
-            print("[TERM]", line)
             if line.startswith(": "):
                 parts = line.split(";", 1)
                 cmdline = parts[1].strip() if len(parts) == 2 else line.strip()
@@ -343,11 +350,15 @@ def sync_loop():
             print("⚠️  Errore nel thread di sync:", e)
 
 
-def main():
-    print("Agent tracker avviato... Ctrl+C per fermare.")
-    last_sync = time.time()
+last_sync = time.time()
 
+
+def tracking():
+    """Thread di tracking periodica."""
+    conn_local = None  # 👈 previene NameError nel finally
     try:
+        conn_local = sqlite3.connect(DB_PATH)
+        cur_local = conn_local.cursor()
         paused = False
         while True:
             if not is_user_active():
@@ -356,31 +367,49 @@ def main():
                     paused = True
                 time.sleep(5)
                 continue
-            else:
-                if paused:
-                    print("[RESUME] Attività rilevata, tracking ripreso ✅")
-                    paused = False
+            elif paused:
+                print("[RESUME] Attività rilevata, tracking ripreso ✅")
+                paused = False
 
-            collect_activity()
-            collect_terminal_activity()
+            try:
+                result = get_active_window()
+                process_name, window_title = (
+                    result if result and len(result) == 2 else ("unknown", "Unknown")
+                )
+                process_name = os.path.basename(process_name)
+                process_name = re.sub(r"\.app$", "", process_name, flags=re.IGNORECASE)
+                cpu_percent = psutil.cpu_percent(interval=None)
+                ts = datetime.now(timezone.utc).isoformat()
 
-            if time.time() - last_sync > SYNC_INTERVAL:
-                try:
-                    sync_to_mongo()
-                except Exception as e:
-                    print("⚠️  Errore sync manuale:", e)
-                last_sync = time.time()
+                cur_local.execute(
+                    """
+                    INSERT INTO activity (timestamp, process, window_title, cpu_percent, synced, device_id, username)
+                    VALUES (?, ?, ?, ?, 0, ?, ?)
+                    """,
+                    (ts, process_name, window_title, cpu_percent, DEVICE_ID, USERNAME),
+                )
+                conn_local.commit()
+            except Exception as e:
+                print("[TRACK ERROR]", e)
 
             time.sleep(5)
 
     except KeyboardInterrupt:
         print("\nArresto richiesto dall'utente.")
+    except Exception as e:
+        print("[TRACKING FATAL ERROR]", e)
     finally:
-        conn.close()
-        try:
-            pymongo.MongoClient(MONGO_URI).close()
-        except:
-            pass
+        if conn_local:
+            try:
+                conn_local.close()
+            except Exception as e:
+                print("[CLOSE ERROR]", e)
+
+
+def main():
+    print("Agent tracker avviato... Ctrl+C per fermare.")
+    while True:
+        time.sleep(1)
 
 
 def start_listeners():
@@ -396,4 +425,5 @@ threading.Thread(target=start_listeners, daemon=True).start()
 
 if __name__ == "__main__":
     threading.Thread(target=sync_loop, daemon=True).start()
+    threading.Thread(target=tracking, daemon=True).start()
     main()
