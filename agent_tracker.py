@@ -7,6 +7,7 @@ import threading
 import datetime
 import os
 import psutil
+from pynput import mouse, keyboard
 import pymongo
 import uuid, hashlib, re
 from datetime import datetime, timezone
@@ -33,6 +34,10 @@ DEVICE_ID = str(uuid.getnode())
 USERNAME = os.getenv("USERNAME") or os.getenv("USER") or "unknown"
 SYSTEM = platform.system()
 DEVICE_NAME = platform.node()
+
+# tempo di inattività massimo in secondi (es. 120 = 2 minuti)
+INACTIVITY_THRESHOLD = 120
+_last_input_time = time.time()
 
 DEV_COMMANDS = [
     "git",
@@ -69,6 +74,23 @@ CREATE TABLE IF NOT EXISTS activity (
 """
 )
 conn.commit()
+
+
+def on_input_activity(*args, **kwargs):
+    global _last_input_time
+    _last_input_time = time.time()
+
+
+# listener mouse e tastiera
+mouse.Listener(
+    on_move=on_input_activity, on_click=on_input_activity, on_scroll=on_input_activity
+).start()
+keyboard.Listener(on_press=on_input_activity).start()
+
+
+def is_user_active():
+    """Ritorna True se l'utente è attivo (input recente)."""
+    return (time.time() - _last_input_time) < INACTIVITY_THRESHOLD
 
 
 def get_active_window():
@@ -176,7 +198,12 @@ def get_active_window():
         return "unknown", "Unknown"
 
 
+_insert_counter = 0
+
+
 def collect_activity():
+    global _insert_counter
+
     try:
         result = get_active_window()
         if not result or len(result) != 2:
@@ -193,7 +220,7 @@ def collect_activity():
     except Exception:
         process_name, window_title = "unknown", "Unknown"
 
-    cpu_percent = psutil.cpu_percent(interval=0.5)
+    cpu_percent = psutil.cpu_percent(interval=None)
     ts = datetime.now(timezone.utc).isoformat()
 
     cur.execute(
@@ -203,6 +230,12 @@ def collect_activity():
         """,
         (ts, process_name, window_title, cpu_percent, DEVICE_ID, USERNAME),
     )
+
+    _insert_counter += 1
+    if _insert_counter >= 5:
+        conn.commit()
+        _insert_counter = 0
+
     conn.commit()
 
 
@@ -298,11 +331,22 @@ def main():
     last_sync = time.time()
 
     try:
+        paused = False
         while True:
+            if not is_user_active():
+                if not paused:
+                    print("[PAUSE] Nessuna attività utente, tracking sospeso...")
+                    paused = True
+                time.sleep(5)
+                continue
+            else:
+                if paused:
+                    print("[RESUME] Attività rilevata, tracking ripreso ✅")
+                    paused = False
+
             collect_activity()
             collect_terminal_activity()
 
-            # sync manuale ogni tot secondi anche dal main (facoltativo)
             if time.time() - last_sync > SYNC_INTERVAL:
                 try:
                     sync_to_mongo()
@@ -316,7 +360,22 @@ def main():
         print("\nArresto richiesto dall'utente.")
     finally:
         conn.close()
+        try:
+            pymongo.MongoClient(MONGO_URI).close()
+        except:
+            pass
 
+
+def start_listeners():
+    mouse.Listener(
+        on_move=on_input_activity,
+        on_click=on_input_activity,
+        on_scroll=on_input_activity,
+    ).start()
+    keyboard.Listener(on_press=on_input_activity).start()
+
+
+threading.Thread(target=start_listeners, daemon=True).start()
 
 if __name__ == "__main__":
     threading.Thread(target=sync_loop, daemon=True).start()
