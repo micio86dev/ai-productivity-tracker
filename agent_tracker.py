@@ -245,6 +245,7 @@ def sync_to_mongo():
     try:
         conn_sync = sqlite3.connect(DB_PATH)
         cur_sync = conn_sync.cursor()
+
         unsynced = cur_sync.execute(
             "SELECT * FROM activity WHERE synced = 0"
         ).fetchall()
@@ -283,13 +284,13 @@ def sync_to_mongo():
 
 
 def sync_loop():
-    """Thread di sincronizzazione periodica."""
+    """Thread di sincronizzazione periodica, con connessione indipendente."""
     while True:
         time.sleep(SYNC_INTERVAL)
         try:
             sync_to_mongo()
         except Exception as e:
-            print("⚠️  Errore sync:", e)
+            print("⚠️  Errore nel thread di sync:", e)
 
 
 def main():
@@ -301,8 +302,12 @@ def main():
             collect_activity()
             collect_terminal_activity()
 
+            # sync manuale ogni tot secondi anche dal main (facoltativo)
             if time.time() - last_sync > SYNC_INTERVAL:
-                sync_to_mongo()
+                try:
+                    sync_to_mongo()
+                except Exception as e:
+                    print("⚠️  Errore sync manuale:", e)
                 last_sync = time.time()
 
             time.sleep(5)
