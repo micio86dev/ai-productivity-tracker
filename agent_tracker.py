@@ -52,7 +52,7 @@ if not MONGO_URI:
 
 
 # === INIT ===
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+conn = sqlite3.connect(DB_PATH)
 cur = conn.cursor()
 cur.execute(
     """
@@ -241,37 +241,45 @@ def collect_terminal_activity():
 
 def sync_to_mongo():
     """Sincronizza le attività non ancora inviate."""
-    unsynced = cur.execute("SELECT * FROM activity WHERE synced = 0").fetchall()
-    if not unsynced:
-        return
-
+    conn_sync = None
     try:
+        conn_sync = sqlite3.connect(DB_PATH)
+        cur_sync = conn_sync.cursor()
+        unsynced = cur_sync.execute(
+            "SELECT * FROM activity WHERE synced = 0"
+        ).fetchall()
+        if not unsynced:
+            return
+
         client = pymongo.MongoClient(MONGO_URI)
         db = client[MONGO_DB]
         col = db[MONGO_COLLECTION]
 
-        docs = []
-        for r in unsynced:
-            docs.append(
-                {
-                    "timestamp": r[1],
-                    "process": r[2],
-                    "window_title": r[3],
-                    "cpu_percent": r[4],
-                    "device_id": r[6],
-                    "username": r[7],
-                    "system": SYSTEM,
-                    "device_name": DEVICE_NAME,
-                }
-            )
+        docs = [
+            {
+                "timestamp": r[1],
+                "process": r[2],
+                "window_title": r[3],
+                "cpu_percent": r[4],
+                "device_id": r[6],
+                "username": r[7],
+                "system": SYSTEM,
+                "device_name": DEVICE_NAME,
+            }
+            for r in unsynced
+        ]
 
         col.insert_many(docs)
-        cur.execute("UPDATE activity SET synced = 1 WHERE synced = 0")
-        conn.commit()
+        cur_sync.execute("UPDATE activity SET synced = 1 WHERE synced = 0")
+        conn_sync.commit()
         print(f"[SYNC] {len(docs)} record sincronizzati su MongoDB")
 
     except Exception as e:
         print("[SYNC ERROR]", e)
+
+    finally:
+        if conn_sync:
+            conn_sync.close()
 
 
 def sync_loop():
