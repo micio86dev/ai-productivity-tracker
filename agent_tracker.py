@@ -59,17 +59,17 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cur = conn.cursor()
 cur.execute(
     """
-CREATE TABLE IF NOT EXISTS activity (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT,
-    process TEXT,
-    window_title TEXT,
-    cpu_percent REAL,
-    synced INTEGER DEFAULT 0,
-    device_id TEXT,
-    username TEXT
-)
-"""
+    CREATE TABLE IF NOT EXISTS activity (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT,
+        process TEXT,
+        window_title TEXT,
+        cpu_percent REAL,
+        synced INTEGER DEFAULT 0,
+        device_id TEXT,
+        username TEXT
+    )
+    """
 )
 conn.commit()
 
@@ -221,51 +221,6 @@ def get_active_window():
         return "unknown", "Unknown"
 
 
-_insert_counter = 0
-
-
-def collect_activity():
-    global _insert_counter
-
-    print(f"[collect_activity]")
-
-    try:
-        result = get_active_window()
-        if not result or len(result) != 2:
-            process_name, window_title = "unknown", "Unknown"
-        else:
-            process_name, window_title = result
-
-        # --- normalizza il nome del processo ---
-        process_name = os.path.basename(process_name)  # prende solo il nome finale
-        process_name = re.sub(
-            r"\.app$", "", process_name, flags=re.IGNORECASE
-        )  # rimuove .app
-
-        print(f"[Activity] {process_name} - {window_title}")
-
-    except Exception:
-        process_name, window_title = "unknown", "Unknown"
-
-    cpu_percent = psutil.cpu_percent(interval=None)
-    ts = datetime.now(timezone.utc).isoformat()
-
-    cur.execute(
-        """
-        INSERT INTO activity (timestamp, process, window_title, cpu_percent, synced, device_id, username)
-        VALUES (?, ?, ?, ?, 0, ?, ?)
-        """,
-        (ts, process_name, window_title, cpu_percent, DEVICE_ID, USERNAME),
-    )
-
-    _insert_counter += 1
-    if _insert_counter >= 10:
-        conn.commit()
-        _insert_counter = 0
-
-    conn.commit()
-
-
 def collect_terminal_activity():
     """Monitora la shell history e registra i comandi DEV rilevanti."""
     print("[TERMINAL TRACKER] Avviato...")
@@ -298,26 +253,8 @@ def collect_terminal_activity():
                     ts = datetime.now(timezone.utc).isoformat()
                     process_name = cmd
                     window_title = "terminal"
-                    cpu_percent = psutil.cpu_percent(interval=None)
 
-                    conn = sqlite3.connect(DB_PATH)
-                    cur = conn.cursor()
-                    cur.execute(
-                        """
-                        INSERT INTO activity (timestamp, process, window_title, cpu_percent, synced, device_id, username)
-                        VALUES (?, ?, ?, ?, 0, ?, ?)
-                        """,
-                        (
-                            ts,
-                            process_name,
-                            window_title,
-                            cpu_percent,
-                            DEVICE_ID,
-                            USERNAME,
-                        ),
-                    )
-                    conn.commit()
-                    conn.close()
+                    eventTrack(process_name, window_title)
 
                     print(f"[TERMINAL] {cmd} command logged ✅")
                     break
@@ -383,44 +320,66 @@ def sync_loop():
 last_sync = time.time()
 
 
-def tracking():
-    """Thread di tracking periodica."""
+def eventTrack(process_name, window_title):
     conn_local = None
     try:
         conn_local = sqlite3.connect(DB_PATH)
         cur_local = conn_local.cursor()
+        ts = datetime.now(timezone.utc).isoformat()
+        cpu_percent = psutil.cpu_percent(interval=None)
+
+        cur_local.execute(
+            """
+                INSERT INTO activity (timestamp, process, window_title, cpu_percent, synced, device_id, username)
+                VALUES (?, ?, ?, ?, 0, ?, ?)
+            """,
+            (
+                ts,
+                process_name,
+                window_title,
+                cpu_percent,
+                DEVICE_ID,
+                USERNAME,
+            ),
+        )
+        conn_local.commit()
+    except Exception as e:
+        print("[TRACK ERROR]", e)
+    finally:
+        if conn_local:
+            try:
+                conn_local.close()
+            except Exception as e:
+                print("[CLOSE ERROR]", e)
+
+
+def tracking():
+    """Thread di tracking periodica."""
+    try:
         paused = False
         while True:
             if not is_user_active():
                 if not paused:
                     print("[PAUSE] Nessuna attività utente, tracking sospeso... ⏸️")
                     paused = True
+                    eventTrack("[PAUSE]", "[PAUSE]")
+
                 time.sleep(TRACKING_INTERVAL)
                 continue
             elif paused:
                 print("[RESUME] Attività rilevata, tracking ripreso ✅")
                 paused = False
 
-            try:
+                eventTrack("[RESUME]", "[RESUME]")
+
                 result = get_active_window()
                 process_name, window_title = (
                     result if result and len(result) == 2 else ("unknown", "Unknown")
                 )
                 process_name = os.path.basename(process_name)
                 process_name = re.sub(r"\.app$", "", process_name, flags=re.IGNORECASE)
-                cpu_percent = psutil.cpu_percent(interval=None)
-                ts = datetime.now(timezone.utc).isoformat()
 
-                cur_local.execute(
-                    """
-                    INSERT INTO activity (timestamp, process, window_title, cpu_percent, synced, device_id, username)
-                    VALUES (?, ?, ?, ?, 0, ?, ?)
-                    """,
-                    (ts, process_name, window_title, cpu_percent, DEVICE_ID, USERNAME),
-                )
-                conn_local.commit()
-            except Exception as e:
-                print("[TRACK ERROR]", e)
+                eventTrack(process_name, window_title)
 
             time.sleep(TRACKING_INTERVAL)
 
@@ -428,12 +387,6 @@ def tracking():
         print("\nArresto richiesto dall'utente.")
     except Exception as e:
         print("[TRACKING FATAL ERROR]", e)
-    finally:
-        if conn_local:
-            try:
-                conn_local.close()
-            except Exception as e:
-                print("[CLOSE ERROR]", e)
 
 
 def main():
