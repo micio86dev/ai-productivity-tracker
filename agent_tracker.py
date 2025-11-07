@@ -29,6 +29,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 DB_PATH = os.path.expanduser(os.getenv("DB_PATH", "~/activity.db"))
 SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "300"))
+TRACKING_INTERVAL = int(os.getenv("TRACKING_INTERVAL", "30"))
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB = os.getenv("MONGO_DB", "productivity")
 MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "activity_logs")
@@ -46,11 +47,6 @@ _last_input_time = time.time()
 DEV_SHELLS = ("zsh", "bash", "fish")
 DEV_COMMANDS = [
     "git",
-    "npm",
-    "npx",
-    "composer",
-    "docker",
-    "yarn",
 ]
 MAX_AGE = 10
 
@@ -271,29 +267,63 @@ def collect_activity():
 
 
 def collect_terminal_activity():
-    cmd = ["tail", "-F", os.path.expanduser("~/.zsh_history")]
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True) as p:
-        assert p.stdout is not None
-        for line in p.stdout:
-            if line.startswith(": "):
-                parts = line.split(";", 1)
-                cmdline = parts[1].strip() if len(parts) == 2 else line.strip()
-            else:
-                cmdline = line.strip()
+    """Monitora la shell history e registra i comandi DEV rilevanti."""
+    print("[TERMINAL TRACKER] Avviato...")
+    history_file = os.path.expanduser("~/.zsh_history")
 
-            if cmdline.startswith("git"):
-                print("[GIT]", cmdline)
+    try:
+        proc = subprocess.Popen(
+            ["tail", "-F", history_file],
+            stdout=subprocess.PIPE,  # 👈 garantisce che stdout non sia None
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
 
-                cpu_percent = psutil.cpu_percent(interval=None)
-                ts = datetime.now(timezone.utc).isoformat()
-                cur.execute(
-                    """
-                    INSERT INTO activity (timestamp, process, window_title, cpu_percent, synced, device_id, username)
-                    VALUES (?, ?, ?, ?, 0, ?, ?)
-                    """,
-                    (ts, "cli", "TERM", cpu_percent, DEVICE_ID, USERNAME),
-                )
-                conn.commit()
+        if proc.stdout is None:
+            print("[TERMINAL ERROR] Nessun output da tail -F")
+            return
+
+        for line in proc.stdout:
+            line = line.strip()
+            if not line or ";" not in line:
+                continue
+
+            cmdline = line.split(";", 1)[1].strip()
+            if not cmdline:
+                continue
+
+            for cmd in DEV_COMMANDS:
+                if cmdline.startswith(cmd + " "):
+                    ts = datetime.now(timezone.utc).isoformat()
+                    process_name = cmd
+                    window_title = "terminal"
+                    cpu_percent = psutil.cpu_percent(interval=None)
+
+                    conn = sqlite3.connect(DB_PATH)
+                    cur = conn.cursor()
+                    cur.execute(
+                        """
+                        INSERT INTO activity (timestamp, process, window_title, cpu_percent, synced, device_id, username)
+                        VALUES (?, ?, ?, ?, 0, ?, ?)
+                        """,
+                        (
+                            ts,
+                            process_name,
+                            window_title,
+                            cpu_percent,
+                            DEVICE_ID,
+                            USERNAME,
+                        ),
+                    )
+                    conn.commit()
+                    conn.close()
+
+                    print(f"[TERMINAL] {cmd} command logged ✅")
+                    break
+
+    except Exception as e:
+        print("[TERMINAL ERROR]", e)
 
 
 def sync_to_mongo():
@@ -365,7 +395,7 @@ def tracking():
                 if not paused:
                     print("[PAUSE] Nessuna attività utente, tracking sospeso...")
                     paused = True
-                time.sleep(5)
+                time.sleep(TRACKING_INTERVAL)
                 continue
             elif paused:
                 print("[RESUME] Attività rilevata, tracking ripreso ✅")
@@ -392,7 +422,7 @@ def tracking():
             except Exception as e:
                 print("[TRACK ERROR]", e)
 
-            time.sleep(5)
+            time.sleep(TRACKING_INTERVAL)
 
     except KeyboardInterrupt:
         print("\nArresto richiesto dall'utente.")
@@ -426,4 +456,5 @@ threading.Thread(target=start_listeners, daemon=True).start()
 if __name__ == "__main__":
     threading.Thread(target=sync_loop, daemon=True).start()
     threading.Thread(target=tracking, daemon=True).start()
+    threading.Thread(target=collect_terminal_activity, daemon=True).start()
     main()
