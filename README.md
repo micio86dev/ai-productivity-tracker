@@ -67,20 +67,13 @@ pkill -f agent_tracker.py
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile agent_tracker.py
+pyinstaller --onefile --add-data ".env:." agent_tracker.py
 ```
 
 Questo genera un binario in:
 
 - dist/agent_tracker (macOS/Linux)
 - dist/agent_tracker.exe (Windows)
-
-```bash
-pyinstaller --onefile \
-  --add-data ".env:." \
-  --add-data "README.md:." \
-  agent_tracker.py
-```
 
 🧠 Su Windows usa ; invece di : per separare percorsi:
 

@@ -41,14 +41,10 @@ _last_input_time = time.time()
 
 DEV_COMMANDS = [
     "git",
-    "node",
     "npm",
     "npx",
-    "python",
-    "php",
     "composer",
     "docker",
-    "bun",
     "yarn",
 ]
 
@@ -102,52 +98,78 @@ def get_active_window():
 
     # --- macOS ---
     if system == "Darwin":
+        app_name = ""
+        window_title = ""
+
         try:
-            from AppKit import NSWorkspace  # type: ignore
+            script = """
+                tell application "System Events"
+                    set frontApp to name of first application process whose frontmost is true
+                    return frontApp
+                end tell
+                """
+            result = subprocess.check_output(["osascript", "-e", script])
+            app_name = result.decode("utf-8").strip()
+            if app_name != "Electron":
+                window_title = app_name
+            else:
+                from AppKit import NSWorkspace  # type: ignore
 
-            active_app = NSWorkspace.sharedWorkspace().frontmostApplication()
-            app_name = active_app.localizedName()
-            window_title = app_name
+                active_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+                app_name = active_app.localizedName()
+                window_title = app_name
+        except Exception:
+            print(f"[Active Window] Not found")
 
-            # Browser principali
-            if app_name in ["Google Chrome", "Safari"]:
-                scripts = {
-                    "Google Chrome": """
-                        tell application "Google Chrome"
-                            if windows = {} then return ""
-                            return URL of active tab of front window
-                        end tell
-                    """,
-                    "Safari": """
-                        tell application "Safari"
-                            if windows = {} then return ""
-                            return URL of current tab of front window
-                        end tell
-                    """,
-                }
-                try:
-                    url = (
-                        subprocess.check_output(["osascript", "-e", scripts[app_name]])
-                        .decode()
-                        .strip()
-                    )
-                    if url:
-                        # estrai dominio
-                        match = re.search(r"https?://([a-zA-Z0-9.-]+)", url)
-                        if match:
-                            window_title = match.group(1)
-                        else:
-                            window_title = url
+        # Browser principali
+        if app_name in ["Google Chrome", "Safari", "Firefox", "Brave Browser"]:
+            scripts = {
+                "Google Chrome": """
+                    tell application "Google Chrome"
+                        if windows = {} then return ""
+                        return URL of active tab of front window
+                    end tell
+                """,
+                "Safari": """
+                    tell application "Safari"
+                        if windows = {} then return ""
+                        return URL of current tab of front window
+                    end tell
+                """,
+                "Firefox": """
+                    tell application "Firefox"
+                        if windows = {} then return ""
+                        return URL of current tab of front window
+                    end tell
+                """,
+                "Brave Browser": """
+                    tell application "Brave Browser"
+                        if windows = {} then return ""
+                        return URL of current tab of front window
+                    end tell
+                """,
+            }
+            try:
+                url = (
+                    subprocess.check_output(["osascript", "-e", scripts[app_name]])
+                    .decode()
+                    .strip()
+                )
+                if url:
+                    # estrai dominio
+                    match = re.search(r"https?://([a-zA-Z0-9.-]+)", url)
+                    if match:
+                        window_title = match.group(1)
                     else:
-                        window_title = app_name
-                except Exception:
+                        window_title = url
+                else:
                     window_title = app_name
+            except Exception:
+                window_title = app_name
 
-            return app_name, window_title or app_name
+        print(f"[Active Window] {window_title}")
 
-        except Exception as e:
-            print(f"[WARN] macOS active window detection failed: {e}")
-            return "unknown", "Unknown"
+        return app_name, window_title or app_name
 
     # --- Windows ---
     elif system == "Windows":
