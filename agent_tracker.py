@@ -168,8 +168,6 @@ def get_active_window():
             except Exception:
                 window_title = app_name
 
-        print(f"[Active Window] {window_title}")
-
         return app_name, window_title or app_name
 
     # --- Windows ---
@@ -223,7 +221,6 @@ def get_active_window():
 
 def collect_terminal_activity():
     """Monitora la shell history e registra i comandi DEV rilevanti."""
-    print("[TERMINAL TRACKER] Avviato...")
     history_file = os.path.expanduser("~/.zsh_history")
 
     try:
@@ -317,9 +314,6 @@ def sync_loop():
             print("⚠️  Errore nel thread di sync:", e)
 
 
-last_sync = time.time()
-
-
 def eventTrack(process_name, window_title):
     conn_local = None
     try:
@@ -327,6 +321,8 @@ def eventTrack(process_name, window_title):
         cur_local = conn_local.cursor()
         ts = datetime.now(timezone.utc).isoformat()
         cpu_percent = psutil.cpu_percent(interval=None)
+
+        print(f"[EVENT TRACK] {process_name} {window_title}")
 
         cur_local.execute(
             """
@@ -372,14 +368,14 @@ def tracking():
 
                 eventTrack("[RESUME]", "[RESUME]")
 
-                result = get_active_window()
-                process_name, window_title = (
-                    result if result and len(result) == 2 else ("unknown", "Unknown")
-                )
-                process_name = os.path.basename(process_name)
-                process_name = re.sub(r"\.app$", "", process_name, flags=re.IGNORECASE)
+            result = get_active_window()
+            process_name, window_title = (
+                result if result and len(result) == 2 else ("unknown", "Unknown")
+            )
+            process_name = os.path.basename(process_name)
+            process_name = re.sub(r"\.app$", "", process_name, flags=re.IGNORECASE)
 
-                eventTrack(process_name, window_title)
+            eventTrack(process_name, window_title)
 
             time.sleep(TRACKING_INTERVAL)
 
@@ -390,7 +386,7 @@ def tracking():
 
 
 def main():
-    print("Agent tracker avviato... Ctrl+C per fermare.")
+    print("[AGENT TRACKER] Avviato... Ctrl+C per fermare.")
     while True:
         time.sleep(1)
 
@@ -404,10 +400,9 @@ def start_listeners():
     keyboard.Listener(on_press=on_input_activity).start()
 
 
-threading.Thread(target=start_listeners, daemon=True).start()
-
 if __name__ == "__main__":
-    threading.Thread(target=sync_loop, daemon=True).start()
     threading.Thread(target=tracking, daemon=True).start()
+    threading.Thread(target=sync_loop, daemon=True).start()
+    threading.Thread(target=start_listeners, daemon=True).start()
     threading.Thread(target=collect_terminal_activity, daemon=True).start()
     main()
