@@ -32,7 +32,9 @@ SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "300"))
 TRACKING_INTERVAL = int(os.getenv("TRACKING_INTERVAL", "30"))
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB = os.getenv("MONGO_DB", "productivity")
-MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "activity_logs")
+ACTIVITY_LOGS_TABLE = "activity_logs"
+PROCESS_WINDOW_TABLE = "process_windows"
+DEVICES_TABLE = "devices"
 
 # === IDENTIFICATORI DEVICE ===
 DEVICE_ID = str(uuid.getnode())
@@ -53,7 +55,6 @@ MAX_AGE = 10
 if not MONGO_URI:
     raise ValueError("❌ MONGO_URI mancante. Inseriscilo in .env")
 
-
 # === INIT ===
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cur = conn.cursor()
@@ -72,6 +73,32 @@ cur.execute(
     """
 )
 conn.commit()
+
+
+def sync_device():
+    try:
+        client = pymongo.MongoClient(MONGO_URI)
+        db = client[MONGO_DB]
+        col = db[DEVICES_TABLE]
+
+        db[DEVICES_TABLE].create_index([("device_id", 1)], unique=True)
+
+        col.update_one(
+            {
+                "device_id": DEVICE_ID,
+            },
+            {
+                "$setOnInsert": {
+                    "device_id": DEVICE_ID,
+                    "user_id": None,
+                }
+            },
+            upsert=True,
+        )
+    except Exception as e:
+        print("[DEVICE SYNC ERROR]", e)
+
+    print(f"[DEVICE SYNC] {DEVICE_ID}")
 
 
 def on_input_activity(*args, **kwargs):
@@ -275,8 +302,14 @@ def sync_to_mongo():
 
         client = pymongo.MongoClient(MONGO_URI)
         db = client[MONGO_DB]
-        col = db[MONGO_COLLECTION]
+        col_activity = db[ACTIVITY_LOGS_TABLE]
+        col_process = db[PROCESS_WINDOW_TABLE]
 
+        db[PROCESS_WINDOW_TABLE].create_index(
+            [("device_id", 1), ("process", 1), ("window_title", 1)], unique=True
+        )
+
+        # --- 1️⃣ Inserisci attività ---
         docs = [
             {
                 "timestamp": r[1],
@@ -291,7 +324,31 @@ def sync_to_mongo():
             for r in unsynced
         ]
 
-        col.insert_many(docs)
+        col_activity.insert_many(docs)
+
+        # --- 2️⃣ Aggiorna tabella processi univoci ---
+        for doc in docs:
+            try:
+                col_process.update_one(
+                    {
+                        "device_id": doc["device_id"],
+                        "process": doc["process"],
+                        "window_title": doc["window_title"],
+                    },
+                    {
+                        "$setOnInsert": {
+                            "device_id": doc["device_id"],
+                            "process": doc["process"],
+                            "window_title": doc["window_title"],
+                            "level": None,
+                            "active": False,
+                        }
+                    },
+                    upsert=True,
+                )
+            except Exception as e:
+                print("[PROCESS UPSERT ERROR]", e)
+
         cur_sync.execute("UPDATE activity SET synced = 1 WHERE synced = 0")
         conn_sync.commit()
         print(f"[SYNC] {len(docs)} record sincronizzati su MongoDB")
@@ -353,6 +410,9 @@ def tracking():
     """Thread di tracking periodica."""
     try:
         paused = False
+        last_window = None
+        last_process = None
+
         while True:
             if not is_user_active():
                 if not paused:
@@ -375,7 +435,10 @@ def tracking():
             process_name = os.path.basename(process_name)
             process_name = re.sub(r"\.app$", "", process_name, flags=re.IGNORECASE)
 
-            eventTrack(process_name, window_title)
+            if window_title != last_window or process_name != last_process:
+                eventTrack(process_name, window_title)
+                last_window = window_title
+                last_process = process_name
 
             time.sleep(TRACKING_INTERVAL)
 
@@ -387,6 +450,8 @@ def tracking():
 
 def main():
     print("[AGENT TRACKER] Avviato... Ctrl+C per fermare.")
+    sync_device()
+
     while True:
         time.sleep(1)
 
