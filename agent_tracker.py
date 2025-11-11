@@ -8,6 +8,8 @@ import datetime
 import os
 import psutil
 import Quartz
+import tkinter as tk
+from tkinter import ttk
 
 # --- Fix Quartz LazyImport bug (ignora warning Pylance) ---
 try:
@@ -73,6 +75,78 @@ cur.execute(
     """
 )
 conn.commit()
+
+
+def get_apps():
+    client = pymongo.MongoClient(MONGO_URI)
+    db = client[MONGO_DB]
+    col = db[PROCESS_WINDOW_TABLE]
+
+    voices = list(
+        col.find(
+            {
+                "device_id": DEVICE_ID,
+                "process": {"$not": {"$regex": r"\[PAUSE\]|\[RESUME\]|unknown"}},
+            },
+            {"_id": 1, "process": 1, "window_title": 1, "level": 1},
+        )
+    )
+    return voices
+
+
+def main_window():
+    """
+    Finestra con slider da 1 a 10 per ogni voce.
+    """
+
+    apps_list = get_apps()
+
+    root = tk.Tk()
+    root.title("Livelli di attenzione")
+    root.geometry("640x480")
+    root.configure(bg="white")
+
+    # intestazioni
+    tk.Label(
+        root, text="Finestra", bg="white", fg="black", font=("Arial", 10, "bold")
+    ).grid(row=0, column=0, padx=10, pady=5, sticky="w")
+    tk.Label(
+        root, text="Livello", bg="white", fg="black", font=("Arial", 10, "bold")
+    ).grid(row=0, column=1, padx=10, pady=5, sticky="e")
+
+    def set_level(voce_id, level):
+        client = pymongo.MongoClient(MONGO_URI)
+        db = client[MONGO_DB]
+        col = db[PROCESS_WINDOW_TABLE]
+        result = col.update_one({"_id": voce_id}, {"$set": {"level": level}})
+        if result.modified_count:
+            print(f"✅ Aggiornato {voce_id} → level {level}")
+        else:
+            print(f"ℹ️ Nessun cambiamento per {voce_id} (già {level})")
+
+    # callback per quando rilasci il mouse
+    def on_release(event, voce_id):
+        scale = event.widget
+        level = int(float(scale.get()))
+        set_level(voce_id, level)
+
+    # righe dinamiche
+    for i, voce in enumerate(apps_list, start=1):
+        initial_level = voce["level"] if isinstance(voce["level"], (int, float)) else 5
+        tk.Label(
+            root,
+            text=voce["process"] + " (" + voce["window_title"] + ")",
+            textvariable=voce["window_title"],
+            bg="white",
+            fg="black",
+            font=("Arial", 10),
+        ).grid(row=i, column=0, sticky="w", padx=10, pady=3)
+        scale = ttk.Scale(root, from_=1, to=10, orient="horizontal", length=150)
+        scale.set(initial_level)
+        scale.grid(row=i, column=1, padx=10, pady=3)
+        scale.bind("<ButtonRelease-1>", lambda e, vid=voce["_id"]: on_release(e, vid))
+
+    root.mainloop()
 
 
 def sync_device():
@@ -470,4 +544,6 @@ if __name__ == "__main__":
     threading.Thread(target=sync_loop, daemon=True).start()
     threading.Thread(target=start_listeners, daemon=True).start()
     threading.Thread(target=collect_terminal_activity, daemon=True).start()
+
+    main_window()
     main()
