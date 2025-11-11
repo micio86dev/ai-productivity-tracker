@@ -22,7 +22,13 @@ CONFIG_FILE=".env"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "Inserisci la tua stringa MongoDB Atlas URI:"
   read -r MONGO_URI
-  echo "MONGO_URI=\"$MONGO_URI\"" > "$CONFIG_FILE"
+  cat > "$CONFIG_FILE" <<EOF
+  MONGO_URI="$MONGO_URI"
+  DB_PATH="~/activity.db"
+  MONGO_DB="agent_sessions"
+  SYNC_INTERVAL=60
+  TRACKING_INTERVAL=5
+EOF
   echo "✅ Config salvata in $CONFIG_FILE"
 else
   echo "⚙️  Config già presente."
@@ -33,5 +39,5 @@ echo "✅ Installazione completata!"
 echo "Per avviare l'agent:"
 echo ""
 echo "  source .venv/bin/activate"
-echo "  python agent_tracker.py"
+echo "  python main.py"
 echo ""

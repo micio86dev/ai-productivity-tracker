@@ -1,88 +1,51 @@
-# 🧠 AI Productivity Tracker
+# Activity Tracker
 
-Un piccolo **agent Python** che registra in background le tue attività al computer (finestra attiva, utilizzo CPU, ecc.) e sincronizza automaticamente i dati su **MongoDB Atlas**.
+Monitora l'attività dell'utente e sincronizza con MongoDB.
 
-L’obiettivo è raccogliere dati reali sui tuoi pattern di lavoro per analizzarli e creare un sistema di produttività personalizzato.
-
----
-
-## 🚀 Funzionalità
-
-- Rileva finestra e processo attivo ogni 10 secondi
-- Registra l’uso della CPU
-- Salva i dati in locale su **SQLite** (`~/activity.db`)
-- Sincronizza periodicamente (ogni 5 minuti) con **MongoDB Atlas**
-- Funziona in background
-
----
-
-## 🧩 Requisiti
-
-- Python ≥ 3.8
-- Accesso a un cluster **MongoDB Atlas**
-- Sistema operativo: macOS, Linux o Windows
-- Git (opzionale, se cloni il repo)
-
----
-
-## ⚙️ Setup
-
-1. **Clona il progetto**
-
-   ```bash
-   git clone https://github.com/tuo-user/ai-productivity-tracker.git
-   cd ai-productivity-tracker
-   ```
-
-2. **Lancia l’installazione automatica**
+## Installazione
 
 ```bash
-chmod +x install.sh
-./install.sh
+# Crea virtual environment
+python3 -m venv venv
+source venv/bin/activate  # Linux/macOS
+# venv\Scripts\activate  # Windows
+
+# Installa dipendenze
+pip install -r requirements.txt
+
+# Configura .env
+cp .env.example .env
+# Modifica .env con le tue credenziali
 ```
 
-3. **Avvio manuale**
+## Configurazione
+
+Crea file `.env` nella root:
+
+```env
+DB_PATH=~/activity.db
+MONGO_URI=mongodb://localhost:27017
+MONGO_DB=productivity
+SYNC_INTERVAL=5
+TRACKING_INTERVAL=60
+```
+
+## Utilizzo
 
 ```bash
-source .venv/bin/activate
-python agent_tracker.py
+python main.py
 ```
 
-In background (Linux/macOS):
+## Struttura
+
+- `config/` - Configurazione
+- `core/` - Logica business
+- `gui/` - Interfaccia grafica
+- `utils/` - Utilities
+- `tests/` - Test unitari
+
+## Build
 
 ```bash
-nohup python agent_tracker.py &
-```
-
-Ferma con `Ctrl + C` o cercando il processo:
-
-```bash
-pkill -f agent_tracker.py
-```
-
-4. **SQLite (locale)**
-   File: `~/activity.db`
-
-5. **Generazione eseguibile**
-
-```bash
-pip install pyinstaller
-pyinstaller -w -F --add-data ".env:." --name "AgentTracker" agent_tracker.py
-```
-
-Questo genera un binario in:
-
-- dist/agent_tracker (macOS/Linux)
-- dist/agent_tracker.exe (Windows)
-
-🧠 Su Windows usa ; invece di : per separare percorsi:
-
-```csharp
---add-data ".env;."
-```
-
-⚙️ **Test rapido**
-
-```bash
-./dist/agent_tracker
+pyinstaller -w -F --add-data ".env:." --name "AgentTracker" main.py
 ```
