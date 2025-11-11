@@ -38,6 +38,14 @@ MONGO_DB = os.getenv("MONGO_DB", "productivity")
 ACTIVITY_LOGS_TABLE = "activity_logs"
 PROCESS_WINDOW_TABLE = "process_windows"
 DEVICES_TABLE = "devices"
+PROCESS_BLACKLIST = [
+    "[PAUSE]",
+    "[RESUME]",
+    "unknown",
+    "Finder",
+    "Activity Monitor",
+    "Agent Tracker",
+]
 
 root = None
 mongo_executor = ThreadPoolExecutor(max_workers=2)
@@ -108,7 +116,7 @@ indicators = {}
 def add_process_window(i, voce):
     global root
 
-    if voce in ["unknown", "[PAUSE]", "[RESUME]"]:
+    if voce in PROCESS_BLACKLIST:
         return
     initial_level = voce["level"] if isinstance(voce["level"], (int, float)) else 5
 
@@ -133,16 +141,16 @@ def add_process_window(i, voce):
         "window_title": voce["window_title"],
     }
 
-    def set_level_async(voce_id, level):
+    def set_level_async(voce_id, level=5):
         def worker():
             try:
                 col = mongo_db[PROCESS_WINDOW_TABLE]
                 result = col.update_one({"_id": voce_id}, {"$set": {"level": level}})
-                print(
-                    f"✅ Aggiornato {voce_id} → level {level}"
-                    if result.modified_count
-                    else f"ℹ️ Nessun cambiamento ({level})"
-                )
+
+                if result.modified_count:
+                    print(f"✅ Aggiornato {voce_id} → level {level}")
+                else:
+                    print(f"ℹ️ Nessun cambiamento {voce_id} → {level}")
             except Exception as e:
                 print("[SET LEVEL ERROR]", e)
 
@@ -479,8 +487,8 @@ def sync_to_mongo():
                             "device_id": doc["device_id"],
                             "process": doc["process"],
                             "window_title": doc["window_title"],
-                            "level": None,
-                            "active": False,
+                            "level": 5,  # 5 is default
+                            "active": True,
                         }
                     },
                     upsert=True,
