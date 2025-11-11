@@ -22,6 +22,7 @@ from pynput import mouse, keyboard
 import pymongo
 import uuid, re
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 
 # === CONFIG ===
 from dotenv import load_dotenv
@@ -37,7 +38,10 @@ MONGO_DB = os.getenv("MONGO_DB", "productivity")
 ACTIVITY_LOGS_TABLE = "activity_logs"
 PROCESS_WINDOW_TABLE = "process_windows"
 DEVICES_TABLE = "devices"
+
 root = None
+mongo_executor = ThreadPoolExecutor(max_workers=2)
+_last_timer = {}
 
 # === IDENTIFICATORI DEVICE ===
 DEVICE_ID = str(uuid.getnode())
@@ -77,11 +81,13 @@ cur.execute(
 )
 conn.commit()
 
+mongo_client = pymongo.MongoClient(MONGO_URI)
+mongo_db = mongo_client[MONGO_DB]
+
 
 def get_apps():
-    client = pymongo.MongoClient(MONGO_URI)
-    db = client[MONGO_DB]
-    col = db[PROCESS_WINDOW_TABLE]
+    global mongo_db
+    col = mongo_db[PROCESS_WINDOW_TABLE]
 
     voices = list(
         col.find(
@@ -99,51 +105,68 @@ APPS = get_apps()
 indicators = {}
 
 
-def render_apps(root):
-    def set_level(voce_id, level):
-        client = pymongo.MongoClient(MONGO_URI)
-        db = client[MONGO_DB]
-        col = db[PROCESS_WINDOW_TABLE]
-        result = col.update_one({"_id": voce_id}, {"$set": {"level": level}})
-        if result.modified_count:
-            print(f"✅ Aggiornato {voce_id} → level {level}")
-        else:
-            print(f"ℹ️ Nessun cambiamento per {voce_id} (già {level})")
+def add_process_window(i, voce):
+    global root
+
+    if voce in ["unknown", "[PAUSE]", "[RESUME]"]:
+        return
+    initial_level = voce["level"] if isinstance(voce["level"], (int, float)) else 5
+
+    # pallino di stato
+    indicator = tk.Label(root, text="●", fg="gray", bg="white", font=("Arial", 12))
+    indicator.grid(row=i, column=0, padx=5, pady=3, sticky="w")
+
+    # testo app
+    text_label = tk.Label(
+        root,
+        text=f"{voce['process']} ({voce['window_title']})",
+        bg="white",
+        fg="black",
+        font=("Arial", 10),
+    )
+    text_label.grid(row=i, column=1, sticky="w", padx=5, pady=3)
+
+    indicators[voce["_id"]] = {
+        "indicator": indicator,
+        "label": text_label,
+        "process": voce["process"],
+        "window_title": voce["window_title"],
+    }
+
+    def set_level_async(voce_id, level):
+        def worker():
+            try:
+                col = mongo_db[PROCESS_WINDOW_TABLE]
+                result = col.update_one({"_id": voce_id}, {"$set": {"level": level}})
+                print(
+                    f"✅ Aggiornato {voce_id} → level {level}"
+                    if result.modified_count
+                    else f"ℹ️ Nessun cambiamento ({level})"
+                )
+            except Exception as e:
+                print("[SET LEVEL ERROR]", e)
+
+        mongo_executor.submit(worker)
 
     # callback per quando rilasci il mouse
     def on_release(event, voce_id):
-        scale = event.widget
-        level = int(float(scale.get()))
-        set_level(voce_id, level)
-
-    for i, voce in enumerate(APPS, start=1):
-        initial_level = voce["level"] if isinstance(voce["level"], (int, float)) else 5
-
-        # pallino di stato
-        indicator = tk.Label(root, text="●", fg="gray", bg="white", font=("Arial", 12))
-        indicator.grid(row=i, column=0, padx=5, pady=3, sticky="w")
-
-        # testo app
-        text_label = tk.Label(
-            root,
-            text=f"{voce['process']} ({voce['window_title']})",
-            bg="white",
-            fg="black",
-            font=("Arial", 10),
+        level = int(float(event.widget.get()))
+        if voce_id in _last_timer:
+            _last_timer[voce_id].cancel()
+        _last_timer[voce_id] = threading.Timer(
+            0.3, lambda: set_level_async(voce_id, level)
         )
-        text_label.grid(row=i, column=1, sticky="w", padx=5, pady=3)
+        _last_timer[voce_id].start()
 
-        indicators[voce["_id"]] = {
-            "indicator": indicator,
-            "label": text_label,
-            "process": voce["process"],
-            "window_title": voce["window_title"],
-        }
+    scale = ttk.Scale(root, from_=1, to=10, orient="horizontal", length=150)
+    scale.set(initial_level)
+    scale.grid(row=i, column=2, padx=10, pady=3)
+    scale.bind("<ButtonRelease-1>", lambda e, vid=voce["_id"]: on_release(e, vid))
 
-        scale = ttk.Scale(root, from_=1, to=10, orient="horizontal", length=150)
-        scale.set(initial_level)
-        scale.grid(row=i, column=2, padx=10, pady=3)
-        scale.bind("<ButtonRelease-1>", lambda e, vid=voce["_id"]: on_release(e, vid))
+
+def render_apps():
+    for i, voce in enumerate(APPS, start=1):
+        add_process_window(i, voce)
 
 
 def update_active_indicator(root):
@@ -170,6 +193,7 @@ def main_window():
     """
     Finestra con slider da 1 a 10 per ogni voce.
     """
+    global root
 
     root = tk.Tk()
     root.title("Livelli di attenzione")
@@ -184,9 +208,8 @@ def main_window():
         root, text="Livello", bg="white", fg="black", font=("Arial", 10, "bold")
     ).grid(row=0, column=1, padx=10, pady=5, sticky="e")
 
-    # TODO: refresh apps list
     update_active_indicator(root)
-    render_apps(root)
+    render_apps()
 
     root.mainloop()
 
@@ -467,7 +490,6 @@ def sync_to_mongo():
 
         cur_sync.execute("UPDATE activity SET synced = 1 WHERE synced = 0")
         conn_sync.commit()
-        render_apps(root)
         print(f"[SYNC] {len(docs)} record sincronizzati su MongoDB")
 
     except Exception as e:
@@ -513,8 +535,28 @@ def eventTrack(process_name, window_title):
             ),
         )
         conn_local.commit()
+
+        # --- Aggiorna GUI se nuova voce ---
+        def maybe_add_to_ui():
+            if any(
+                data["window_title"] == window_title for data in indicators.values()
+            ):
+                return
+
+            voce = {
+                "_id": f"{process_name}:{window_title}",
+                "process": process_name,
+                "window_title": window_title,
+                "level": 5,
+            }
+            row_index = len(indicators) + 1
+            add_process_window(row_index, voce)
+
+        if root:
+            root.after(0, maybe_add_to_ui)
     except Exception as e:
         print("[TRACK ERROR]", e)
+
     finally:
         if conn_local:
             try:
@@ -551,6 +593,10 @@ def tracking():
             )
             process_name = os.path.basename(process_name)
             process_name = re.sub(r"\.app$", "", process_name, flags=re.IGNORECASE)
+            ignored_processes = ["agent_tracker", "Python", "Finder", "unknown"]
+
+            if process_name in ignored_processes:
+                continue
 
             if window_title != last_window or process_name != last_process:
                 eventTrack(process_name, window_title)

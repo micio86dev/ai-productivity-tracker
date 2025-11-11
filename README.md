@@ -67,7 +67,7 @@ pkill -f agent_tracker.py
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --add-data ".env:." agent_tracker.py
+pyinstaller -w -F --add-data ".env:." --name "AgentTracker" agent_tracker.py
 ```
 
 Questo genera un binario in:
