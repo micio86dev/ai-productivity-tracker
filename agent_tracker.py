@@ -37,6 +37,7 @@ MONGO_DB = os.getenv("MONGO_DB", "productivity")
 ACTIVITY_LOGS_TABLE = "activity_logs"
 PROCESS_WINDOW_TABLE = "process_windows"
 DEVICES_TABLE = "devices"
+root = None
 
 # === IDENTIFICATORI DEVICE ===
 DEVICE_ID = str(uuid.getnode())
@@ -94,26 +95,11 @@ def get_apps():
     return voices
 
 
-def main_window():
-    """
-    Finestra con slider da 1 a 10 per ogni voce.
-    """
+APPS = get_apps()
+indicators = {}
 
-    apps_list = get_apps()
 
-    root = tk.Tk()
-    root.title("Livelli di attenzione")
-    root.geometry("640x480")
-    root.configure(bg="white")
-
-    # intestazioni
-    tk.Label(
-        root, text="Finestra", bg="white", fg="black", font=("Arial", 10, "bold")
-    ).grid(row=0, column=0, padx=10, pady=5, sticky="w")
-    tk.Label(
-        root, text="Livello", bg="white", fg="black", font=("Arial", 10, "bold")
-    ).grid(row=0, column=1, padx=10, pady=5, sticky="e")
-
+def render_apps(root):
     def set_level(voce_id, level):
         client = pymongo.MongoClient(MONGO_URI)
         db = client[MONGO_DB]
@@ -130,21 +116,77 @@ def main_window():
         level = int(float(scale.get()))
         set_level(voce_id, level)
 
-    # righe dinamiche
-    for i, voce in enumerate(apps_list, start=1):
+    for i, voce in enumerate(APPS, start=1):
         initial_level = voce["level"] if isinstance(voce["level"], (int, float)) else 5
-        tk.Label(
+
+        # pallino di stato
+        indicator = tk.Label(root, text="●", fg="gray", bg="white", font=("Arial", 12))
+        indicator.grid(row=i, column=0, padx=5, pady=3, sticky="w")
+
+        # testo app
+        text_label = tk.Label(
             root,
-            text=voce["process"] + " (" + voce["window_title"] + ")",
-            textvariable=voce["window_title"],
+            text=f"{voce['process']} ({voce['window_title']})",
             bg="white",
             fg="black",
             font=("Arial", 10),
-        ).grid(row=i, column=0, sticky="w", padx=10, pady=3)
+        )
+        text_label.grid(row=i, column=1, sticky="w", padx=5, pady=3)
+
+        indicators[voce["_id"]] = {
+            "indicator": indicator,
+            "label": text_label,
+            "process": voce["process"],
+            "window_title": voce["window_title"],
+        }
+
         scale = ttk.Scale(root, from_=1, to=10, orient="horizontal", length=150)
         scale.set(initial_level)
-        scale.grid(row=i, column=1, padx=10, pady=3)
+        scale.grid(row=i, column=2, padx=10, pady=3)
         scale.bind("<ButtonRelease-1>", lambda e, vid=voce["_id"]: on_release(e, vid))
+
+
+def update_active_indicator(root):
+    """Aggiorna i colori per l'app attiva."""
+    try:
+        active_process, active_title = get_active_window()
+        for data in indicators.values():
+            if (
+                data["process"] == active_process
+                and data["window_title"] == active_title
+            ):
+                data["indicator"].config(fg="green")
+                data["label"].config(fg="green", font=("Arial", 10, "bold"))
+            else:
+                data["indicator"].config(fg="gray")
+                data["label"].config(fg="black", font=("Arial", 10))
+    except Exception as e:
+        print("[UI UPDATE ERROR]", e)
+    finally:
+        root.after(1000, update_active_indicator, root)
+
+
+def main_window():
+    """
+    Finestra con slider da 1 a 10 per ogni voce.
+    """
+
+    root = tk.Tk()
+    root.title("Livelli di attenzione")
+    root.geometry("640x480")
+    root.configure(bg="white")
+
+    # intestazioni
+    tk.Label(
+        root, text="Finestra", bg="white", fg="black", font=("Arial", 10, "bold")
+    ).grid(row=0, column=0, padx=10, pady=5, sticky="w")
+    tk.Label(
+        root, text="Livello", bg="white", fg="black", font=("Arial", 10, "bold")
+    ).grid(row=0, column=1, padx=10, pady=5, sticky="e")
+
+    # TODO: refresh apps list
+    update_active_indicator(root)
+    render_apps(root)
 
     root.mainloop()
 
@@ -425,6 +467,7 @@ def sync_to_mongo():
 
         cur_sync.execute("UPDATE activity SET synced = 1 WHERE synced = 0")
         conn_sync.commit()
+        render_apps(root)
         print(f"[SYNC] {len(docs)} record sincronizzati su MongoDB")
 
     except Exception as e:
